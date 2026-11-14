@@ -1,0 +1,49 @@
+name: RiffPractice
+options:
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  RiffPractice:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - path: RiffPractice
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jamesdunn.riffpractice
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: RiffPractice
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+        "TARGETED_DEVICE_FAMILY[sdk=iphone*]": "2"
+        "INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphone*]": YES
+        "INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad[sdk=iphone*]": "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Config/Mac.entitlements
+        "CODE_SIGN_STYLE[sdk=macosx*]": Manual
+        "CODE_SIGN_IDENTITY[sdk=macosx*]": "-"
+  RiffPracticeTests:
+    type: bundle.unit-test
+    supportedDestinations: [iOS, macOS]
+    sources: [RiffPracticeTests]
+    dependencies:
+      - target: RiffPractice
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jamesdunn.riffpractice.tests
+        GENERATE_INFOPLIST_FILE: YES
+        "TEST_HOST[sdk=macosx*]": "$(BUILT_PRODUCTS_DIR)/RiffPractice.app/Contents/MacOS/RiffPractice"
+        "CODE_SIGN_STYLE[sdk=macosx*]": Manual
+        "CODE_SIGN_IDENTITY[sdk=macosx*]": "-"
+schemes:
+  RiffPractice:
+    build:
+      targets:
+        RiffPractice: all
+    test:
+      targets:
+        - RiffPracticeTests

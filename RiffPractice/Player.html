@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <title>YouTube player</title>
+    <style>
+        html, body { margin: 0; width: 100%; height: 100%; background: #101010; }
+        #player { display: block; width: 100%; height: 100%; border: 0; }
+    </style>
+</head>
+<body>
+<div id="player"></div>
+<script>
+    const configuration = __PLAYER_CONFIGURATION__;
+    let player;
+    let ready = false;
+    let pendingRate = null;
+    let lastState = null;
+    let lastCapabilities = "";
+    let hasBoundary = false;
+    let clearBoundaryOnResume = false;
+
+    function emit(type, fields = {}) {
+        window.webkit.messageHandlers.playerEvent.postMessage({
+            type, session: configuration.session, ...fields
+        });
+    }
+
+    function publishCapabilities() {
+        const rates = player.getAvailablePlaybackRates();
+        const duration = player.getDuration();
+        const capabilities = JSON.stringify([rates, duration]);
+        if (lastCapabilities !== capabilities) {
+            lastCapabilities = capabilities;
+            emit("capabilities", { rates, duration });
+        }
+    }
+
+    function applyPendingRate() {
+        if (pendingRate === null) { return; }
+        const requested = pendingRate;
+        pendingRate = null;
+        if (player.getAvailablePlaybackRates().includes(requested)) {
+            player.setPlaybackRate(requested);
+        } else {
+            emit("rateUnavailable", { requested });
+        }
+    }
+
+    window.onYouTubeIframeAPIReady = function () {
+        player = new YT.Player("player", {
+            videoId: configuration.videoID,
+            playerVars: {
+                origin: configuration.origin,
+                controls: 1,
+                playsinline: 1,
+                autoplay: 0
+            },
+            events: {
+                onReady: function () {
+                    ready = true;
+                    emit("ready");
+                    publishCapabilities();
+                },
+                onStateChange: function (event) {
+                    lastState = event.data;
+                    emit("state", { state: lastState, time: player.getCurrentTime() });
+                    publishCapabilities();
+                    if ((lastState === 1 || lastState === 2) && clearBoundaryOnResume) {
+                        clearBoundary();
+                    }
+                    if (lastState === 1) { applyPendingRate(); }
+                },
+                onPlaybackRateChange: function (event) {
+                    emit("rate", { rate: event.data });
+                },
+                onError: function (event) {
+                    emit("error", { code: event.data });
+                },
+                onAutoplayBlocked: function () {
+                    emit("autoplayBlocked");
+                }
+            }
+        });
+    };
+
+    function clearBoundary() {
+        if (!hasBoundary) { return; }
+        const state = player.getPlayerState();
+        if (state === 1 || state === 2) {
+            hasBoundary = false;
+            clearBoundaryOnResume = false;
+            player.seekTo(player.getCurrentTime(), true);
+        } else {
+            clearBoundaryOnResume = true;
+        }
+    }
+
+    window.runPlayerCommand = function (name, data) {
+        if (!ready) { return; }
+        switch (name) {
+        case "play":
+            player.playVideo();
+            break;
+        case "pause":
+            pendingRate = null;
+            player.pauseVideo();
+            break;
+        case "rate":
+            pendingRate = data.rate;
+            if (lastState === 1 || (lastState === 2 && player.getDuration() > 0)) {
+                applyPendingRate();
+            }
+            break;
+        case "seek":
+            hasBoundary = false;
+            clearBoundaryOnResume = false;
+            player.seekTo(data.start, true);
+            break;
+        case "restart":
+            hasBoundary = false;
+            clearBoundaryOnResume = false;
+            player.seekTo(data.start, true);
+            player.playVideo();
+            break;
+        case "clearBoundary":
+            clearBoundary();
+            break;
+        case "segment":
+            hasBoundary = true;
+            clearBoundaryOnResume = false;
+            pendingRate = data.rate;
+            player.loadVideoById({
+                videoId: configuration.videoID,
+                startSeconds: data.start,
+                endSeconds: data.end
+            });
+            break;
+        }
+    };
+
+    window.setInterval(function () {
+        if (!ready) { return; }
+        emit("sample", {
+            time: player.getCurrentTime(),
+            state: player.getPlayerState(),
+            rate: player.getPlaybackRate()
+        });
+    }, 62.5);
+</script>
+<script async src="https://www.youtube.com/iframe_api"
+        onerror="emit('scriptFailed')"></script>
+</body>
+</html>

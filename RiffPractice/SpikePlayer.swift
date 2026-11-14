@@ -129,9 +129,13 @@ final class SpikePlayer {
     }
 
     func jump(to time: Double) {
-        guard canJump, !isLooping, time.isFinite, time >= 0,
-              let duration, time < duration else { return }
-        send("seek", data: ["start": time])
+        guard canJump, time.isFinite, time >= 0,
+              let duration, time <= duration else { return }
+        if isLooping {
+            record("Stop loop to seek")
+            resetLoop()
+        }
+        send("seek", data: ["start": min(time, max(0, duration - 0.05))])
     }
 
     func beginLoop(strategy: LoopStrategy, ranges: [LoopRange], wholeVideo: Bool = false) {

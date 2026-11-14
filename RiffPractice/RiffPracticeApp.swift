@@ -9,7 +9,7 @@ struct RiffPracticeApp: App {
         Window("RiffPractice", id: "practice") {
             SpikeView().frame(minWidth: 560, minHeight: 550)
         }
-        .defaultSize(width: 800, height: 820)
+        .defaultSize(width: 1040, height: 760)
         .windowResizability(.contentMinSize)
         .modelContainer(for: PracticeRecord.self)
         #else
@@ -40,35 +40,32 @@ private struct SpikeView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let fitsPlayer = proxy.size.width >= 240 && proxy.size.height >= 360
+            let wide = proxy.size.width >= 690
+            let fitsPlayer = proxy.size.width >= 240 && proxy.size.height >= 410
+            let panelWidth = min(320, max(258, proxy.size.width * 0.31))
+            let playerWidth = min(proxy.size.width, 1240) - 40 - (wide ? panelWidth + 33 : 0)
+            let availableHeight = max(200, proxy.size.height - 136)
+            let playerHeight = max(200, min(playerWidth * 9 / 16, availableHeight * (wide ? 0.75 : 0.52)))
+            let workspace = wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 16)) :
+                AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
             VStack(alignment: .leading, spacing: 12) {
                 Text("RiffPractice").font(.title.bold())
                     .accessibilityAddTraits(.isHeader)
                 linkControls
-                if fitsPlayer {
-                    let preferredHeight = min(proxy.size.width - 40, 900) * 9 / 16
-                    EmbedView(webView: player.webView)
+                workspace {
+                    playbackPane(fitsPlayer: fitsPlayer, height: playerHeight)
                         .frame(maxWidth: .infinity)
-                        .frame(height: max(200, min(preferredHeight, proxy.size.height * 0.5)))
-                        .background(Color.black)
-                } else {
-                    Text("Enlarge the window to view the YouTube player.")
-                        .font(.callout)
-                }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        diagnostics
-                        practiceControls
-                        Divider()
-                        storageControls
-                        Divider()
-                        logControls
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(maxHeight: wide ? .infinity : playerHeight + 128, alignment: .top)
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.23))
+                        .frame(width: wide ? 1 : nil, height: wide ? nil : 1)
+                    storageControls
+                        .frame(width: wide ? panelWidth : nil)
+                        .frame(maxWidth: wide ? nil : .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
             .padding(20)
-            .frame(maxWidth: 940)
+            .frame(maxWidth: 1240)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .onChange(of: fitsPlayer, initial: true) { updateActivity(fitsPlayer) }
             .onChange(of: scenePhase, initial: true) { updateActivity(fitsPlayer) }
@@ -80,6 +77,41 @@ private struct SpikeView: View {
                 presenting: sectionToDelete
             ) { section in
                 Button("Delete \(section.name)", role: .destructive) { delete(section) }
+            }
+        }
+    }
+
+    private func playbackPane(fitsPlayer: Bool, height: Double) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if fitsPlayer {
+                EmbedView(webView: player.webView)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: height)
+                    .background(Color.black)
+                if let duration = player.duration {
+                    PracticeTimeline(
+                        duration: duration,
+                        playhead: player.mediaTime,
+                        sections: timelineSections.compactMap(\.range),
+                        activeSection: currentSection?.range,
+                        sectionName: currentSection?.name,
+                        canSeek: player.canJump,
+                        seek: { player.jump(to: $0) }
+                    )
+                    .id(player.videoID)
+                }
+            } else {
+                Text("Enlarge the window to view the YouTube player.")
+                    .font(.callout)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    practiceControls
+                    diagnostics
+                    logControls
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -141,9 +173,6 @@ private struct SpikeView: View {
                 HStack { loopButtons }
                 VStack(alignment: .leading) { loopButtons }
             }
-            Text("Press Play in the video to play through. To repeat part of it, set A and B or choose saved sections below.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
         }
         .buttonStyle(.bordered)
     }
@@ -226,29 +255,37 @@ private struct SpikeView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
-                HStack {
-                    Button("Loop Selected (\(selectedSections.count))") {
-                        player.beginLoop(strategy: strategy, ranges: selectedRanges)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canLoop || player.isLooping || selectedRanges.count != selectedSections.count || selectedRanges.isEmpty)
-                    if !selectedSections.isEmpty {
-                        Button("Clear Selection") { selectedSections = [] }
-                            .disabled(player.isLooping)
-                    }
+                ViewThatFits(in: .horizontal) {
+                    HStack { selectionButtons }
+                    VStack(alignment: .leading) { selectionButtons }
                 }
-                Text("Selected sections repeat in start-time order, skipping gaps.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                ForEach(sections) { section in
-                    sectionRow(section)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(sections) { section in
+                            sectionRow(section)
+                        }
+                    }
                 }
             }
         }
     }
 
+    @ViewBuilder
+    private var selectionButtons: some View {
+        Button("Loop Selected (\(selectedSections.count))") {
+            player.beginLoop(strategy: strategy, ranges: selectedRanges)
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(!canLoop || player.isLooping || selectedRanges.count != selectedSections.count || selectedRanges.isEmpty)
+        if !selectedSections.isEmpty {
+            Button("Clear Selection") { selectedSections = [] }
+                .disabled(player.isLooping)
+        }
+    }
+
     private func sectionRow(_ section: PracticeRecord) -> some View {
-        HStack(spacing: 10) {
+        let isCurrent = currentSection?.persistentModelID == section.persistentModelID
+        return HStack(spacing: 10) {
             Toggle(isOn: Binding(
                 get: { selectedSections.contains(section.persistentModelID) },
                 set: { checked in
@@ -258,6 +295,8 @@ private struct SpikeView: View {
             )) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(section.name)
+                        .fontWeight(isCurrent ? .semibold : .regular)
+                        .accessibilityLabel(isCurrent ? "\(section.name), current section" : section.name)
                     Text("\(format(section.start))–\(format(section.end)) s")
                         .monospacedDigit()
                         .font(.caption)
@@ -273,7 +312,7 @@ private struct SpikeView: View {
             }
             .accessibilityLabel("Jump to \(section.name)")
             .help("Jump to start")
-            .disabled(!player.canJump || player.isLooping || playableRange(for: section) == nil)
+            .disabled(!player.canJump || playableRange(for: section) == nil)
             Button {
                 if let range = playableRange(for: section) {
                     player.beginLoop(strategy: strategy, ranges: [range])
@@ -295,7 +334,9 @@ private struct SpikeView: View {
             .disabled(player.isLooping)
         }
         .buttonStyle(.borderless)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .background(isCurrent ? Color.accentColor.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var nameField: some View {
@@ -344,6 +385,15 @@ private struct SpikeView: View {
     private var videoID: String? { YouTubeLink.videoID(from: link) }
 
     private var sections: [PracticeRecord] { PracticeRecord.sections(for: videoID, in: records) }
+
+    private var timelineSections: [PracticeRecord] {
+        PracticeRecord.sections(for: player.videoID, in: records).filter { playableRange(for: $0) != nil }
+    }
+
+    private var currentSection: PracticeRecord? {
+        let time = player.mediaTime
+        return timelineSections.last { $0.start <= time && time < $0.end }
+    }
 
     private var savedVideos: [PracticeRecord] {
         var seen = Set<String>()

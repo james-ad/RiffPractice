@@ -13,6 +13,7 @@
 		AB6742A88FDF94275CCEB2CC /* LoopExperiment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BBCCD32BCD54C74252D9DDD /* LoopExperiment.swift */; };
 		BADBCC06EC2B9B8B70A448BF /* SpikeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5907DCFBAFB42A49668A0626 /* SpikeTests.swift */; };
 		F766EF4E9CCEE7D9C4B873F2 /* SpikePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9F05F729D527EA6F33775F /* SpikePlayer.swift */; };
+		FBA4AF010D255C90366CEDD5 /* PracticeTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FBE3396EAFBF92C71E6CBDD /* PracticeTimeline.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,6 +33,7 @@
 		557507B0EC7191609B95CF78 /* PracticeRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeRecord.swift; sourceTree = "<group>"; };
 		5907DCFBAFB42A49668A0626 /* SpikeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpikeTests.swift; sourceTree = "<group>"; };
 		5F9F05F729D527EA6F33775F /* SpikePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpikePlayer.swift; sourceTree = "<group>"; };
+		9FBE3396EAFBF92C71E6CBDD /* PracticeTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeTimeline.swift; sourceTree = "<group>"; };
 		DF10214972B97C7F12E3B861 /* RiffPractice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RiffPractice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E6E52BB68C56E2F936FD23FE /* RiffPracticeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiffPracticeApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -52,6 +54,7 @@
 				1BBCCD32BCD54C74252D9DDD /* LoopExperiment.swift */,
 				3A69AE4798FC1413F4274FAF /* Player.html */,
 				557507B0EC7191609B95CF78 /* PracticeRecord.swift */,
+				9FBE3396EAFBF92C71E6CBDD /* PracticeTimeline.swift */,
 				E6E52BB68C56E2F936FD23FE /* RiffPracticeApp.swift */,
 				5F9F05F729D527EA6F33775F /* SpikePlayer.swift */,
 			);
@@ -161,6 +164,7 @@
 			files = (
 				AB6742A88FDF94275CCEB2CC /* LoopExperiment.swift in Sources */,
 				5F90CF405328AE9C2FFA4C35 /* PracticeRecord.swift in Sources */,
+				FBA4AF010D255C90366CEDD5 /* PracticeTimeline.swift in Sources */,
 				3C8D060B5F02D37ACA1E480F /* RiffPracticeApp.swift in Sources */,
 				F766EF4E9CCEE7D9C4B873F2 /* SpikePlayer.swift in Sources */,
 			);

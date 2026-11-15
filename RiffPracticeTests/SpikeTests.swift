@@ -126,4 +126,25 @@ struct SpikeTests {
         #expect(PracticeRecord.sections(for: "M7lc1UVf-VE", in: remaining).map(\.name) == ["Solo"])
         #expect(PracticeRecord.sections(for: "abcdefghijk", in: remaining).map(\.name) == ["Other video"])
     }
+
+    @Test @MainActor func sessionNamesLeaveExistingMarkersIntact() throws {
+        let videoID = "M7lc1UVf-VE"
+        let namedOnlyID = "abcdefghijk"
+        let verse = PracticeRecord(link: "https://youtu.be/\(videoID)", name: "Verse", start: 8, end: 12, rate: 0.75)
+        let intro = PracticeRecord(link: "https://www.youtube.com/watch?v=\(videoID)", name: "Intro", start: 0, end: 4, rate: 0.75)
+        let records = [verse, intro]
+
+        let before = SavedVideoSession.all(sections: records, titles: [:])
+        #expect(before.map(\.title) == ["Intro"])
+
+        let renamed = SavedVideoSession.all(sections: records, titles: [videoID: "Practice song", namedOnlyID: "New session"])
+        #expect(renamed.map(\.title) == ["New session", "Practice song"])
+        let session = try #require(renamed.first { $0.id == videoID })
+        #expect(session.rate == 0.75)
+        let reopenedLink = try #require(YouTubeLink.watchURL(for: session.id))
+        let restoredMarkers = PracticeRecord.sections(for: YouTubeLink.videoID(from: reopenedLink.absoluteString), in: records)
+        #expect(restoredMarkers.map(\.name) == ["Intro", "Verse"])
+        #expect(restoredMarkers.map(\.start) == [0, 8])
+        #expect(restoredMarkers.map(\.end) == [4, 12])
+    }
 }

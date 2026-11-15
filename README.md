@@ -12,6 +12,8 @@ Native SwiftUI guitar-practice prototype for iPad and Mac. Save named sections f
 
 The practice timeline beneath the video shows saved section markers and the current playhead. Click or drag the timeline to seek on release, or click a marker to jump to its section. Seeking ends any active loop. The Sections list sits beside the video on wider windows and below it in compact layouts.
 
+Use **Name Session** above the section list to save a title for the video. Open it again by name from **Saved Sessions** in the bookmark menu. Renaming a session keeps its saved sections and times intact.
+
 Run `xcodegen generate` to regenerate the project after editing `project.yml`. Run Mac tests with `xcodebuild -project RiffPractice.xcodeproj -scheme RiffPractice -destination 'platform=macOS' test`.
 
 See [the spike checklist](SPIKE.md) for physical-device testing and decision criteria.

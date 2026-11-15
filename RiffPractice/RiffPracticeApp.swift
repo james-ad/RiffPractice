@@ -25,6 +25,7 @@ private struct SpikeView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Query private var records: [PracticeRecord]
+    @AppStorage("videoSessionTitles") private var storedSessionTitles = Data()
     @State private var player = SpikePlayer()
     @State private var link = ""
     @State private var name = ""
@@ -34,6 +35,8 @@ private struct SpikeView: View {
     @State private var selectedSections: Set<PersistentIdentifier> = []
     @State private var editedSection: PersistentIdentifier?
     @State private var sectionToDelete: PracticeRecord?
+    @State private var sessionToName: String?
+    @State private var sessionTitleDraft = ""
     @State private var strategy = LoopStrategy.seek
     @State private var notice: String?
     @FocusState private var isEditing: Bool
@@ -77,6 +80,18 @@ private struct SpikeView: View {
                 presenting: sectionToDelete
             ) { section in
                 Button("Delete \(section.name)", role: .destructive) { delete(section) }
+            }
+            .alert(
+                "Session Name",
+                isPresented: Binding(get: { sessionToName != nil }, set: { if !$0 { sessionToName = nil } }),
+                presenting: sessionToName
+            ) { id in
+                TextField("Session name", text: $sessionTitleDraft)
+                Button("Save") { saveSessionTitle(for: id) }
+                    .disabled(sessionTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("This name appears in Saved Sessions.")
             }
         }
     }
@@ -125,17 +140,17 @@ private struct SpikeView: View {
                 .onSubmit(load)
             Button("Load Video", action: load)
                 .buttonStyle(.borderedProminent)
-            Menu("Saved Videos", systemImage: "bookmark") {
-                ForEach(savedVideos, id: \.persistentModelID) { section in
-                    Button("\(section.name) · \(section.videoID ?? "")") {
-                        openSavedVideo(section)
+            Menu("Saved Sessions", systemImage: "bookmark") {
+                ForEach(savedSessions) { session in
+                    Button(session.title) {
+                        openSavedSession(session)
                     }
                 }
             }
             .labelStyle(.iconOnly)
-            .accessibilityLabel("Saved Videos")
-            .help("Saved Videos")
-            .disabled(savedVideos.isEmpty)
+            .accessibilityLabel("Saved Sessions")
+            .help("Saved Sessions")
+            .disabled(savedSessions.isEmpty)
             if let id = player.videoID, let url = YouTubeLink.watchURL(for: id) {
                 Link(destination: url) {
                     Image(systemName: "arrow.up.right.square")
@@ -245,6 +260,19 @@ private struct SpikeView: View {
 
     private var storageControls: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let id = videoID {
+                let title = sessionTitles[id]
+                HStack {
+                    if let title {
+                        Text(title).font(.headline).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Button(title == nil ? "Name Session" : "Rename Session") {
+                        sessionTitleDraft = title ?? ""
+                        sessionToName = id
+                    }
+                }
+            }
             Text("Sections").font(.headline)
             ViewThatFits(in: .horizontal) {
                 HStack { nameField; saveButton; cancelEditButton }
@@ -395,12 +423,12 @@ private struct SpikeView: View {
         return timelineSections.last { $0.start <= time && time < $0.end }
     }
 
-    private var savedVideos: [PracticeRecord] {
-        var seen = Set<String>()
-        return records.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.filter {
-            guard let id = $0.videoID else { return false }
-            return seen.insert(id).inserted
-        }
+    private var sessionTitles: [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: storedSessionTitles)) ?? [:]
+    }
+
+    private var savedSessions: [SavedVideoSession] {
+        SavedVideoSession.all(sections: records, titles: sessionTitles)
     }
 
     private var canLoop: Bool {
@@ -469,10 +497,23 @@ private struct SpikeView: View {
         }
     }
 
-    private func openSavedVideo(_ section: PracticeRecord) {
+    private func saveSessionTitle(for id: String) {
+        let title = sessionTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        var titles = sessionTitles
+        titles[id] = title
+        do {
+            storedSessionTitles = try JSONEncoder().encode(titles)
+        } catch {
+            notice = "Could not save the session name: \(error.localizedDescription)"
+        }
+    }
+
+    private func openSavedSession(_ session: SavedVideoSession) {
+        guard let url = YouTubeLink.watchURL(for: session.id) else { return }
         resetSectionSelection()
-        link = section.link
-        preferredRate = section.rate
+        link = url.absoluteString
+        preferredRate = session.rate
         load()
     }
 

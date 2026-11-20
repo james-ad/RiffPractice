@@ -1,8 +1,8 @@
 import Foundation
 
 enum LoopStrategy: String, CaseIterable, Identifiable {
-    case seek = "Seek at B"
-    case bounded = "Replay bounded segment"
+    case seek = "Jump to loop start"
+    case bounded = "Reload loop segment"
 
     var id: Self { self }
 }
@@ -68,6 +68,11 @@ struct LoopExperiment {
 
     mutating func beginSeek(at uptime: TimeInterval) {
         seekStartedAt = uptime
+    }
+
+    mutating func prepareToResume() {
+        seekStartedAt = nil
+        playedSinceLoad = true
     }
 
     mutating func sample(mediaTime: Double, uptime: TimeInterval, isPlaying: Bool, videoDuration: Double? = nil) -> Action? {

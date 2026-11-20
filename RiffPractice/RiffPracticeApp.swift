@@ -4,6 +4,33 @@ import SwiftData
 import SwiftUI
 import WebKit
 
+enum SectionsPlacement: String, CaseIterable, Identifiable {
+    case left = "Left"
+    case right = "Right"
+    case below = "Below"
+
+    var id: Self { self }
+}
+
+enum PracticeWorkspaceItem: String, Identifiable {
+    case video, sections
+    var id: Self { self }
+}
+
+enum SectionsPanelSizing {
+    static let minimumWidth = 280.0
+    static let maximumWidth = 320.0
+
+    static func width(_ requested: Double) -> Double {
+        requested.isFinite ? min(max(requested, minimumWidth), maximumWidth) : maximumWidth
+    }
+
+    static func items(placement: SectionsPlacement, visible: Bool, sideBySide: Bool) -> [PracticeWorkspaceItem] {
+        guard visible else { return [.video] }
+        return placement == .left && sideBySide ? [.sections, .video] : [.video, .sections]
+    }
+}
+
 @main
 struct RiffPracticeApp: App {
     var body: some Scene {
@@ -57,8 +84,16 @@ private struct SpikeView: View {
     let library: PracticeLibrary
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Query private var records: [PracticeSection]
     @Query private var videoSessions: [VideoSession]
+    @AppStorage("sectionsPanelPlacement") private var panelPlacement = SectionsPlacement.right
+    @AppStorage("sectionsPanelVisible") private var panelVisible = true
+    @AppStorage("sectionsPanelWidth") private var savedPanelWidth = 320.0
+    @AppStorage("skipNewSessionConfirmation") private var skipNewSessionConfirmation = false
+    @AppStorage("editorVideoScale") private var savedVideoScale = 1.0
+    @GestureState private var panelWidthChange = 0.0
+    @GestureState private var videoHeightChange = 0.0
     @State private var player = SpikePlayer()
     @State private var link = ""
     @State private var name = ""
@@ -73,23 +108,66 @@ private struct SpikeView: View {
     @State private var sessionTitleDraft = ""
     @State private var strategy = LoopStrategy.seek
     @State private var notice: String?
+    @State private var repeatingSections: [TimelineSection] = []
+    @State private var composingSession = true
+    @State private var newSessionLink = ""
+    @State private var newSessionName = ""
+    @State private var confirmingNewSession = false
+    @State private var skipConfirmationDraft = false
+    @State private var fullScreen = false
+    @State private var fullScreenControlsVisible = true
+    @State private var pointerOverControls = false
+    @State private var interactionToken = 0
+    @State private var videoVisible = true
+    #if os(macOS)
+    @State private var nativeWindow: NSWindow?
+    #endif
     @FocusState private var isEditing: Bool
 
-    var body: some View {
-        GeometryReader { proxy in
-            let wide = proxy.size.width >= 690
-            let fitsPlayer = proxy.size.width >= 240 && proxy.size.height >= 410
-            let panelWidth = min(320, max(258, proxy.size.width * 0.31))
-            let playerWidth = min(proxy.size.width, 1240) - 40 - (wide ? panelWidth + 33 : 0)
-            let availableHeight = max(200, proxy.size.height - 136)
-            let playerHeight = max(200, min(playerWidth * 9 / 16, availableHeight * (wide ? 0.75 : 0.52)))
-            let workspace = wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 16)) :
-                AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-            VStack(alignment: .leading, spacing: 12) {
+    private func workspaceContent(in proxy: GeometryProxy) -> some View {
+        let wide = proxy.size.width >= 720 && panelPlacement != .below
+        let fitsPlayer = proxy.size.width >= 240 && proxy.size.height >= 410
+        let panelWidth = SectionsPanelSizing.width(savedPanelWidth + panelWidthChange)
+        let showPanel = panelVisible && !fullScreen
+        let availableHeight = max(200, proxy.size.height - (fullScreen ? 64 : (composingSession ? 210 : 116)))
+        let belowPanelHeight = min(280, max(180, availableHeight * 0.36))
+        let workspace =
+            wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 16)) : AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+        let content = VStack(alignment: .leading, spacing: fullScreen ? 0 : 12) {
+            if !fullScreen {
                 HStack {
                     Text("RiffPractice").font(.title.bold())
                         .accessibilityAddTraits(.isHeader)
                     Spacer()
+                    Button {
+                        setFullScreen(true)
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    }
+                    .accessibilityLabel("Full-screen practice")
+                    .help("Full-screen practice")
+                    .disabled(player.videoID == nil)
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) { panelVisible.toggle() }
+                    } label: {
+                        Label(
+                            panelVisible ? "Hide Sections" : "Show Sections",
+                            systemImage: panelPlacement == .left ? "sidebar.left" : "sidebar.right")
+                    }
+                    .buttonStyle(.bordered)
+                    Menu {
+                        Picker("Sections position", selection: $panelPlacement) {
+                            ForEach(SectionsPlacement.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        if panelPlacement != .below {
+                            Button("Reset Panel Width") { savedPanelWidth = SectionsPanelSizing.maximumWidth }
+                        }
+                        Button("Reset Video Size") { savedVideoScale = 1 }
+                    } label: {
+                        Image(systemName: "rectangle.3.group")
+                    }
+                    .accessibilityLabel("Layout options")
+                    .help("Layout options")
                     Menu {
                         Text(library.syncStatus)
                         Button("Check iCloud") { Task { await library.refreshAccount() } }
@@ -103,105 +181,219 @@ private struct SpikeView: View {
                     .help(library.syncStatus)
                 }
                 linkControls
-                workspace {
-                    playbackPane(fitsPlayer: fitsPlayer, height: playerHeight)
-                        .frame(maxWidth: .infinity)
-                        .frame(maxHeight: wide ? .infinity : playerHeight + (activeRange == nil ? 128 : 208), alignment: .top)
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.23))
-                        .frame(width: wide ? 1 : nil, height: wide ? nil : 1)
-                    storageControls
-                        .frame(width: wide ? panelWidth : nil)
-                        .frame(maxWidth: wide ? nil : .infinity, maxHeight: .infinity, alignment: .topLeading)
+                if composingSession { newSessionForm }
+            }
+            workspace {
+                ForEach(SectionsPanelSizing.items(placement: panelPlacement, visible: showPanel, sideBySide: wide)) { item in
+                    switch item {
+                    case .video:
+                        playbackPane(fitsPlayer: fitsPlayer)
+                            .frame(maxWidth: .infinity)
+                            .frame(
+                                maxHeight: wide || !showPanel ? .infinity : max(220, availableHeight - belowPanelHeight - 12),
+                                alignment: .top)
+                    case .sections:
+                        HStack(spacing: 8) {
+                            if wide && panelPlacement == .right { resizeHandle }
+                            storageControls.frame(width: wide ? panelWidth : nil)
+                            if wide && panelPlacement == .left { resizeHandle }
+                        }
+                        .frame(maxWidth: wide ? nil : .infinity, maxHeight: wide ? .infinity : belowPanelHeight, alignment: .topLeading)
+                    }
                 }
             }
-            .padding(20)
-            .frame(maxWidth: 1240)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            if fullScreen { fullScreenDock.frame(height: 64) }
+        }
+        .padding(fullScreen ? 0 : 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(fullScreen ? Color.black : Color.clear)
+        return
+            content
+            .preferredColorScheme(fullScreen ? .dark : nil)
+            #if os(macOS)
+                .background {
+                    FullScreenWindowObserver(
+                        resolved: { nativeWindow = $0 },
+                        changed: { fullScreen = $0 },
+                        activity: { if fullScreen { revealFullScreenControls() } }
+                    )
+                    .frame(width: 0, height: 0)
+                }
+            #else
+                .statusBarHidden(fullScreen)
+                .persistentSystemOverlays(fullScreen ? .hidden : .automatic)
+            #endif
+            .onContinuousHover { phase in
+                if case .active = phase, fullScreen { revealFullScreenControls() }
+            }
+            .simultaneousGesture(TapGesture().onEnded { if fullScreen { revealFullScreenControls() } })
+            .onKeyPress(.escape) {
+                guard fullScreen else { return .ignored }
+                setFullScreen(false)
+                return .handled
+            }
             .onChange(of: fitsPlayer, initial: true) { updateActivity(fitsPlayer) }
             .onChange(of: scenePhase, initial: true) { updateActivity(fitsPlayer) }
             .onChange(of: videoID) { _, _ in resetSectionSelection() }
             .onChange(of: selectedRanges) { if player.isLooping { player.stopLoop() } }
+            .onChange(of: player.isLooping) { if !player.isLooping { repeatingSections = [] } }
+            .onChange(of: player.isPlaying) { revealFullScreenControls() }
+            .onChange(of: fullScreen) {
+            pointerOverControls = false
+                revealFullScreenControls()
+                updateActivity(fitsPlayer)
+            }
+            .onChange(of: pointerOverControls) { revealFullScreenControls() }
+        .onChange(of: voiceOverEnabled) { revealFullScreenControls() }
+            .task(id: interactionToken) { await hideIdleControls() }
             .onDisappear { player.setActive(false) }
-            .confirmationDialog(
-                "Delete this section?",
-                isPresented: Binding(get: { sectionToDelete != nil }, set: { if !$0 { sectionToDelete = nil } }),
-                presenting: sectionToDelete
-            ) { section in
-                Button("Delete \(section.name)", role: .destructive) { delete(section) }
-            }
-            .alert(
-                "Session Name",
-                isPresented: Binding(get: { sessionToName != nil }, set: { if !$0 { sessionToName = nil } }),
-                presenting: sessionToName
-            ) { id in
-                TextField("Session name", text: $sessionTitleDraft)
-                Button("Save") { saveSessionTitle(for: id) }
-                    .disabled(sessionTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("Cancel", role: .cancel) {}
-            } message: { _ in
-                Text("This name appears in Saved Sessions.")
-            }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            workspaceContent(in: proxy)
+                .confirmationDialog(
+                    "Delete this section?",
+                    isPresented: Binding(get: { sectionToDelete != nil }, set: { if !$0 { sectionToDelete = nil } }),
+                    presenting: sectionToDelete
+                ) { section in
+                    Button("Delete \(section.name)", role: .destructive) { delete(section) }
+                }
+                .alert(
+                    "Session Name",
+                    isPresented: Binding(get: { sessionToName != nil }, set: { if !$0 { sessionToName = nil } }),
+                    presenting: sessionToName
+                ) { id in
+                    TextField("Session name", text: $sessionTitleDraft)
+                    Button("Save") { saveSessionTitle(for: id) }
+                        .disabled(sessionTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Cancel", role: .cancel) {}
+                } message: { _ in
+                    Text("This name appears in Saved Sessions.")
+                }
+                .sheet(isPresented: $confirmingNewSession) {
+                    VStack(alignment: .leading, spacing: 20) {
+                        Text("Start a new session?").font(.title2.bold())
+                        Text("Saved sessions and markers stay available in Open Session. Unsaved section edits will be cleared.")
+                        Toggle("Skip this confirmation next time", isOn: $skipConfirmationDraft)
+                        HStack {
+                            Spacer()
+                            Button("Cancel", role: .cancel) { confirmingNewSession = false }
+                            Button("New Session") {
+                                skipNewSessionConfirmation = skipConfirmationDraft
+                                confirmingNewSession = false
+                                beginNewSession()
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    .padding(24)
+                    .frame(idealWidth: 420)
+                    .presentationDetents([.height(260)])
+                }
         }
     }
 
-    private func playbackPane(fitsPlayer: Bool, height: Double) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if fitsPlayer {
-                EmbedView(webView: player.webView)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: height)
-                    .background(Color.black)
-                if let duration = player.duration {
-                    PracticeTimeline(
-                        duration: duration,
-                        playhead: player.mediaTime,
-                        sections: timelineSections.compactMap(\.range),
-                        activeSection: currentSection?.range,
-                        sectionName: currentSection?.name,
-                        canSeek: player.canJump,
-                        seek: { player.jump(to: $0) },
-                        editRange: activeRange,
-                        changeRange: moveEndpoints
-                    )
-                    .id(player.videoID)
-                }
-            } else {
-                Text("Enlarge the window to view the YouTube player.")
-                    .font(.callout)
-            }
+    private func playbackPane(fitsPlayer: Bool) -> some View {
+        GeometryReader { viewport in
+            let fullSize = VideoViewport.fitted(in: viewport.size)
+            let scale = min(max(savedVideoScale + videoHeightChange, 0.65), 1.4)
+            let width = fullScreen ? fullSize.width : viewport.size.width
+            let height = fullScreen ? fullSize.height : VideoViewport.editorHeight(width: width, scale: scale)
+            ScrollViewReader { reader in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: fullScreen ? 0 : 12) {
+                        if fitsPlayer {
+                            EmbedView(webView: player.webView)
+                                .frame(width: width, height: height)
+                                .background(Color.black)
+                                .background {
+                                    GeometryReader { position in
+                                        Color.clear.preference(
+                                            key: PlayerFramePreference.self,
+                                            value: position.frame(in: .named("practiceVideoViewport")))
+                                    }
+                                }
+                                .id("practice-player")
+                            if !fullScreen {
+                                videoSizeHandle(width: width)
+                            }
+                            if !fullScreen, let duration = player.duration {
+                                PracticeTimeline(
+                                    duration: duration,
+                                    playhead: player.mediaTime,
+                                    sections: timelineEntries,
+                                    activeSection: currentSection?.range,
+                                    sectionName: currentSection?.name,
+                                    canSeek: player.canJump,
+                                    seek: { player.jump(to: $0) },
+                                    editRange: player.isLooping ? nil : activeRange,
+                                    editingSectionID: editedSection,
+                                    changeRange: moveEndpoints,
+                                    selectSection: selectTimelineSection,
+                                    availableWidth: width
+                                )
+                                .id(player.videoID)
+                            }
+                        } else {
+                            Text("Enlarge the window to view the YouTube player.")
+                                .font(.callout)
+                        }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    practiceControls
-                    diagnostics
-                    logControls
+                        if !fullScreen {
+                            if player.isLooping { activeLoopSummary }
+                            VStack(alignment: .leading, spacing: 10) {
+                                practiceControls
+                                playbackStatus
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
+                        }
+                    }
+                    .padding(.bottom, fullScreen ? 0 : 16)
+                    .frame(
+                        maxWidth: .infinity, minHeight: fullScreen ? viewport.size.height : nil,
+                        alignment: fullScreen ? .center : .top)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollDisabled(fullScreen)
+                .coordinateSpace(name: "practiceVideoViewport")
+                .onPreferenceChange(PlayerFramePreference.self) { frame in
+                    guard frame.width > 0, frame.height > 0 else { return }
+                    let intersection = frame.intersection(CGRect(origin: .zero, size: viewport.size))
+                    videoVisible = !intersection.isNull && intersection.height / frame.height > 0.5
+                    updateActivity(fitsPlayer)
+                }
+                .onChange(of: fullScreen) { reader.scrollTo("practice-player", anchor: .top) }
             }
         }
     }
 
     private var linkControls: some View {
         HStack {
-            TextField("YouTube video link", text: $link)
-                .textFieldStyle(.roundedBorder)
-                .autocorrectionDisabled()
-                .focused($isEditing)
-                .onSubmit(load)
-            Button("Load Video", action: load)
-                .buttonStyle(.borderedProminent)
-            Menu("Saved Sessions", systemImage: "bookmark") {
+            Button {
+                if skipNewSessionConfirmation {
+                    beginNewSession()
+                } else {
+                    skipConfirmationDraft = false
+                    confirmingNewSession = true
+                }
+            } label: {
+                Label("New Session", systemImage: "plus.circle")
+            }
+            .buttonStyle(.bordered)
+            Menu("Open Session", systemImage: "folder") {
                 ForEach(savedSessions) { session in
                     Button(session.title) {
                         openSavedSession(session)
                     }
                 }
             }
-            .labelStyle(.iconOnly)
-            .accessibilityLabel("Saved Sessions")
-            .help("Saved Sessions")
+            .accessibilityLabel("Open saved session")
             .disabled(savedSessions.isEmpty)
+            if let id = videoID, let title = sessionTitles[id] {
+                Text(title).font(.headline).lineLimit(1)
+            }
+            Spacer(minLength: 0)
             if let id = player.videoID, let url = YouTubeLink.watchURL(for: id) {
                 Link(destination: url) {
                     Image(systemName: "arrow.up.right.square")
@@ -212,37 +404,132 @@ private struct SpikeView: View {
         }
     }
 
-    private var diagnostics: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(player.status).font(.callout)
-            if let loopPosition = player.loopPosition {
-                Text(loopPosition).font(.callout.weight(.semibold))
+    private var fullScreenDock: some View {
+        HStack(spacing: 12) {
+            Button {
+                setFullScreen(false)
+            } label: {
+                Image(systemName: "arrow.down.right.and.arrow.up.left")
             }
-            Text("\(format(player.mediaTime)) s / \(player.duration.map(format) ?? "—") s   ·   \(rateLabel(player.actualRate)) confirmed   ·   \(player.wrapCount) wraps")
-                .font(.callout.monospacedDigit())
-                .foregroundStyle(.secondary)
+            .accessibilityLabel("Exit full-screen practice")
+            .help("Exit full screen · Escape")
+            Button { player.togglePlayback() } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+            }
+            .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+            .disabled(!player.isReady)
+            rateControls.labelsHidden()
+            if player.isLooping {
+                Button { player.stopLoop() } label: { Image(systemName: "stop.fill") }
+                    .accessibilityLabel("Stop looping")
+                Text(player.isRepeatingVideo ? "Entire video" : repeatingSections.map(\.name).joined(separator: " · "))
+                    .font(.callout).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .buttonStyle(.bordered)
+        .padding(.horizontal, 16)
+        .opacity(fullScreenControlsVisible ? 1 : 0)
+        .allowsHitTesting(fullScreenControlsVisible)
+        .accessibilityHidden(!fullScreenControlsVisible)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            Color.black.contentShape(Rectangle()).onTapGesture { revealFullScreenControls() }
+        }
+        .onHover { pointerOverControls = $0 }
+    }
+
+    private func revealFullScreenControls() {
+        guard fullScreen else { return }
+        fullScreenControlsVisible = true
+        interactionToken += 1
+    }
+
+    private func hideIdleControls() async {
+        guard fullScreen else { return }
+        try? await Task.sleep(for: .seconds(3))
+        guard !Task.isCancelled, fullScreen,
+              FullScreenControls.shouldHide(playing: player.isPlaying,
+                                            pointerOverControls: pointerOverControls,
+                                            voiceOver: voiceOverEnabled) else { return }
+        withAnimation(.easeOut(duration: 0.25)) { fullScreenControlsVisible = false }
+    }
+
+    private func setFullScreen(_ enabled: Bool) {
+        #if os(macOS)
+        if let nativeWindow, nativeWindow.styleMask.contains(.fullScreen) != enabled {
+            nativeWindow.toggleFullScreen(nil)
+        }
+        #endif
+        fullScreen = enabled
+    }
+
+    private func videoSizeHandle(width: Double) -> some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(Color.secondary.opacity(0.4))
+            .frame(width: 44, height: 3)
+            .frame(maxWidth: .infinity)
+            .frame(height: 12)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(coordinateSpace: .global)
+                    .updating($videoHeightChange) { value, change, _ in
+                        change = value.translation.height / max(1, width * 9 / 16)
+                    }
+                    .onEnded { value in
+                        let change = value.translation.height / max(1, width * 9 / 16)
+                        savedVideoScale = min(max(savedVideoScale + change, 0.65), 1.4)
+                    }
+            )
+            .accessibilityLabel("Video height")
+            .accessibilityAdjustableAction { direction in
+                savedVideoScale = min(max(savedVideoScale + (direction == .increment ? 0.1 : -0.1), 0.65), 1.4)
+            }
+            .help("Drag to resize the video · Reset Video Size in layout options")
+    }
+
+    private var newSessionForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Session name", text: $newSessionName).textFieldStyle(.roundedBorder)
+            HStack {
+                TextField("Paste a YouTube video link", text: $newSessionLink)
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled()
+                    .focused($isEditing)
+                    .onSubmit(useNewSessionVideo)
+                Button("Use YouTube Video", action: useNewSessionVideo)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(YouTubeLink.videoID(from: newSessionLink) == nil)
+            }
+        }
+    }
+
+    private var playbackStatus: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !player.isPlaying { Text(player.status).font(.callout).foregroundStyle(.secondary) }
             if let notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
         }
     }
 
     private var practiceControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ViewThatFits(in: .horizontal) {
-                HStack { startControls; endControls }
-                VStack(alignment: .leading) { startControls; endControls }
+            if !player.isLooping {
+                ViewThatFits(in: .horizontal) {
+                    HStack { startControls; endControls }
+                    VStack(alignment: .leading) { startControls; endControls }
+                }
             }
-            if editedSection != nil {
+            if editedSection != nil && !player.isLooping {
                 Text("Drag A or B on the timeline to adjust this section. Release to save.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
             ViewThatFits(in: .horizontal) {
-                HStack { rateControls; strategyControls }
-                VStack(alignment: .leading) { rateControls; strategyControls }
-            }
-            ViewThatFits(in: .horizontal) {
-                HStack { loopButtons }
-                VStack(alignment: .leading) { loopButtons }
+                HStack { rateControls; playbackOptions; loopButtons }
+                VStack(alignment: .leading) {
+                    HStack { rateControls; playbackOptions }
+                    HStack { loopButtons }
+                }
             }
         }
         .buttonStyle(.bordered)
@@ -250,22 +537,20 @@ private struct SpikeView: View {
 
     @ViewBuilder
     private var loopButtons: some View {
-        Button(player.isLooping ? "Stop Looping" : "Loop A–B") {
-            if player.isLooping {
-                player.stopLoop()
-            } else if let range = activeRange {
-                player.beginLoop(strategy: strategy, ranges: [range])
+        if !player.isLooping {
+            Button("Loop A–B") {
+                if let range = activeRange { beginPracticeLoop(ranges: [range]) }
             }
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(!player.isLooping && (!canLoop || activeRange == nil))
-        Button("Loop Entire Video") {
-            if let duration = player.duration, let full = LoopRange(start: 0, end: duration) {
-                player.beginLoop(strategy: .seek, ranges: [full], wholeVideo: true)
+            .buttonStyle(.borderedProminent)
+            .disabled(!canLoop || activeRange == nil)
+            Button("Loop Entire Video") {
+                if let duration = player.duration, let full = LoopRange(start: 0, end: duration) {
+                    beginPracticeLoop(ranges: [full], wholeVideo: true)
+                }
             }
+            .disabled(!canLoop)
         }
-        .disabled(!canLoop || player.isLooping)
-        Button("Pause") { player.pause() }
+        Button(player.isPlaying ? "Pause" : "Play") { player.togglePlayback() }
             .disabled(!player.isReady)
     }
 
@@ -294,13 +579,13 @@ private struct SpikeView: View {
     }
 
     private var rateControls: some View {
-        Picker("Requested speed", selection: $preferredRate) {
+        Picker("Speed", selection: $preferredRate) {
             ForEach(Set(player.availableRates + [preferredRate]).sorted(), id: \.self) { rate in
                 Text(rateLabel(rate) + (player.availableRates.contains(rate) ? "" : " (saved)")).tag(rate)
             }
         }
         .fixedSize()
-        .disabled(!player.isReady || player.isLooping)
+        .disabled(!player.isReady)
         .onChange(of: preferredRate) { _, rate in
             if player.isReady, player.availableRates.contains(rate) {
                 player.setRate(rate)
@@ -319,12 +604,21 @@ private struct SpikeView: View {
         }
     }
 
-    private var strategyControls: some View {
-        Picker("Loop method", selection: $strategy) {
-            ForEach(LoopStrategy.allCases) { Text($0.rawValue).tag($0) }
+    private var playbackOptions: some View {
+        Menu {
+            Picker("Repeat method", selection: $strategy) {
+                ForEach(LoopStrategy.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .disabled(player.isLooping)
+            Toggle("Confirm before new sessions", isOn: Binding(
+                get: { !skipNewSessionConfirmation },
+                set: { skipNewSessionConfirmation = !$0 }
+            ))
+        } label: {
+            Image(systemName: "slider.horizontal.3")
         }
-        .fixedSize()
-        .disabled(player.isLooping)
+        .accessibilityLabel("Playback options")
+        .help("Playback options")
     }
 
     private var storageControls: some View {
@@ -381,7 +675,8 @@ private struct SpikeView: View {
     @ViewBuilder
     private var selectionButtons: some View {
         Button("Loop Selected (\(selectedSections.count))") {
-            player.beginLoop(strategy: strategy, ranges: selectedRanges)
+            let selected = sections.filter { selectedSections.contains($0.id) }
+            beginPracticeLoop(ranges: selectedRanges, sections: selected)
         }
         .buttonStyle(.borderedProminent)
         .disabled(!canLoop || player.isLooping || selectedRanges.count != selectedSections.count || selectedRanges.isEmpty)
@@ -403,6 +698,7 @@ private struct SpikeView: View {
             )) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(section.name)
+                        .lineLimit(1)
                         .fontWeight(isCurrent ? .semibold : .regular)
                         .accessibilityLabel(isCurrent ? "\(section.name), current section" : section.name)
                     Text("\(format(section.start))–\(format(section.end)) s")
@@ -423,7 +719,7 @@ private struct SpikeView: View {
             .disabled(!player.canJump || playableRange(for: section) == nil)
             Button {
                 if let range = playableRange(for: section) {
-                    player.beginLoop(strategy: strategy, ranges: [range])
+                    beginPracticeLoop(ranges: [range], sections: [section])
                 }
             } label: {
                 Image(systemName: "repeat.1")
@@ -464,19 +760,75 @@ private struct SpikeView: View {
         }
     }
 
-    private var logControls: some View {
-        DisclosureGroup("Diagnostics log (\(player.log.count))") {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    ShareLink("Export Log", item: player.logText).disabled(player.log.isEmpty)
-                    Button("Clear Log") { player.clearLog() }.disabled(player.log.isEmpty)
-                }
-                ForEach(player.log.suffix(30)) { entry in
-                    Text(entry.text).font(.caption.monospaced()).textSelection(.enabled)
+    private var resizeHandle: some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(Color.secondary.opacity(0.35))
+            .frame(width: 4, height: 44)
+            .frame(width: 16)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(coordinateSpace: .global)
+                    .updating($panelWidthChange) { value, change, _ in
+                        change = value.translation.width * (panelPlacement == .left ? 1 : -1)
+                    }
+                    .onEnded { value in
+                        let change = value.translation.width * (panelPlacement == .left ? 1 : -1)
+                        savedPanelWidth = SectionsPanelSizing.width(savedPanelWidth + change)
+                    }
+            )
+            .accessibilityLabel("Sections panel width")
+            .accessibilityValue("\(Int(SectionsPanelSizing.width(savedPanelWidth))) points")
+            .accessibilityAdjustableAction { direction in
+                savedPanelWidth = SectionsPanelSizing.width(savedPanelWidth + (direction == .increment ? 10 : -10))
+            }
+            .help("Drag to resize the sections panel")
+    }
+
+    private var activeLoopSummary: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "repeat").foregroundStyle(Color.accentColor)
+            if player.isRepeatingVideo {
+                Text("Entire video").font(.callout.weight(.medium))
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(repeatingSections) { section in
+                            let current = player.mediaTime >= section.range.start && player.mediaTime < section.range.end
+                            Text(section.name)
+                                .font(.callout.weight(current ? .semibold : .regular))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.accentColor.opacity(current ? 0.2 : 0.07), in: Capsule())
+                        }
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 0)
+            Button("Stop") { player.stopLoop() }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Stop looping")
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Currently repeating")
+    }
+
+    private func beginPracticeLoop(ranges: [LoopRange], sections: [PracticeSection] = [], wholeVideo: Bool = false) {
+        player.beginLoop(strategy: wholeVideo ? .seek : strategy, ranges: ranges, wholeVideo: wholeVideo)
+        guard player.isLooping else { return }
+        repeatingSections = sections.compactMap { section in
+            section.range.map { TimelineSection(id: section.id, name: section.name, range: $0) }
+        }
+        if repeatingSections.isEmpty, !wholeVideo, let range = ranges.first {
+            let title = self.sections.first { $0.id == editedSection }?.name ?? "A–B loop"
+            repeatingSections = [TimelineSection(id: "draft", name: title, range: range)]
+        }
+    }
+
+    private func selectTimelineSection(_ id: String, endpoint: TimelineEndpoint) {
+        guard let section = timelineSections.first(where: { $0.id == id }), let range = section.range else { return }
+        player.jump(to: endpoint.time(in: range))
+        edit(section)
     }
 
     private var range: LoopRange? {
@@ -496,6 +848,12 @@ private struct SpikeView: View {
 
     private var timelineSections: [PracticeSection] {
         PracticeSection.sections(for: player.videoID, in: records).filter { playableRange(for: $0) != nil }
+    }
+
+    private var timelineEntries: [TimelineSection] {
+        timelineSections.compactMap { section in
+            section.range.map { TimelineSection(id: section.id, name: section.name, range: $0) }
+        }
     }
 
     private var currentSection: PracticeSection? {
@@ -628,6 +986,44 @@ private struct SpikeView: View {
         resetSectionSelection()
         link = url.absoluteString
         preferredRate = session.rate
+        composingSession = false
+        load()
+    }
+
+    private func beginNewSession() {
+        player.unload()
+        resetSectionSelection()
+        link = ""
+        newSessionLink = ""
+        newSessionName = ""
+        preferredRate = 1
+        notice = nil
+        composingSession = true
+    }
+
+    private func useNewSessionVideo() {
+        guard let id = YouTubeLink.videoID(from: newSessionLink) else {
+            notice = "Paste a valid YouTube video link."
+            return
+        }
+        if let existing = savedSessions.first(where: { $0.id == id }) {
+            openSavedSession(existing)
+            notice = "Opened the existing session “\(existing.title)”."
+            return
+        }
+        let cleanName = newSessionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = cleanName.isEmpty ? "Untitled Session" : cleanName
+        modelContext.insert(VideoSession(videoID: id, title: title))
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            notice = "Could not create the session: \(error.localizedDescription)"
+            return
+        }
+        link = newSessionLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        preferredRate = 1
+        composingSession = false
         load()
     }
 
@@ -644,7 +1040,7 @@ private struct SpikeView: View {
     }
 
     private func updateActivity(_ fitsPlayer: Bool) {
-        player.setActive(scenePhase == .active && fitsPlayer)
+        player.setActive(scenePhase == .active && fitsPlayer && (fullScreen || videoVisible))
     }
 
     private func seconds(_ input: String) -> Double? {

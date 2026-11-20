@@ -6,17 +6,31 @@ Native SwiftUI guitar-practice prototype for iPad and Mac. Save named sections f
 
 1. Open `RiffPractice.xcodeproj` in Xcode and select the **RiffPractice** scheme.
 2. Select your development team in **Signing & Capabilities**, then select **My Mac** or your connected iPad and run. Both targets use the same CloudKit container and require iCloud and Push Notifications provisioning.
-3. Paste a YouTube URL and choose **Load Video**, then press Play in the embed. Set A and B, give the section a name, and choose **Save Section**. Repeat for each song part. Use the bookmark menu to reopen videos with saved sections.
+3. Choose **New Session**, enter a name and a YouTube link, and choose **Use YouTube Video**. Press Play in the video, set A and B, name the section, and choose **Save Section**. Repeat for each song part. **Open Session** lists saved sessions by name. A link that is already saved reopens its existing session.
 4. Use a section's repeat button to loop it alone, or check several and choose **Loop Selected**. Touching or overlapping sections play continuously as one range. Gaps between selected sections are skipped. The jump button takes you to the start of a section for play-through.
-5. Choose **Loop Entire Video** to repeat the full performance, or **Stop Looping** to play through normally. Use a section's options menu to edit or delete it.
+5. Choose **Loop Entire Video** to repeat the full performance, or **Stop** in the active-loop strip to play through normally. Use a section's options menu to edit or delete it.
 
-The practice timeline beneath the video shows saved section markers and the current playhead. Click or drag the timeline to seek on release, or click a marker to jump to its section. Seeking ends any active loop. The Sections list sits beside the video on wider windows and below it in compact layouts.
+The practice timeline beneath the video shows saved section markers and the current playhead. Click or drag the track to seek on release. Choose a marker to jump to and edit that section. Nearby markers use staggered rows or a chooser so every section stays reachable. Seeking ends any active loop.
 
-Use **Name Session** above the section list to save a title for the video. Open it again by name from **Saved Sessions** in the bookmark menu. Renaming a session keeps its saved sections and times intact.
+Use **Name Session** or **Rename Session** above the section list to change its title. Renaming a session keeps its saved sections and times intact.
+
+## Workspace
+
+**Hide Sections** expands the video workspace while a compact strip below the timeline shows the sections currently repeating. **Show Sections** restores the editing list. Use the layout menu to place the list on the left, right, or below the video. Narrow windows use the below-video layout. Drag the side-panel divider to adjust its width between 280 and 320 points. Layout choices are saved on each device.
+
+The playback-options menu beside Speed contains the repeat method. **Jump to loop start** returns to the start when a loop ends. **Reload loop segment** is the alternate playback method. The same menu lets you enable or skip the new-session confirmation. Starting a new session clears unsaved edits. Saved sessions remain available in **Open Session**.
 
 ## Adjust markers
 
-Choose **Edit Section** from a section's options menu. Drag the A and B handles underneath the timeline to move the endpoints and preview the video position. Release to save the changed endpoints. The handles use separate rows so short sections remain adjustable. The text fields still support exact times in seconds. **New Section** creates a five-second draft at the current playhead with both handles ready to move. Name the draft and choose **Save Section** to keep it.
+The compact timeline places all A/start flags above the track and all B/end flags below it. Each shield-shaped flag has a stem to its exact time. Choose a flag or **Edit Section** to adjust that section. Drag its highlighted A or B flag and release to save. The visible flags are compact, with larger invisible touch targets. Crowded endpoints offer a section chooser within their own A or B row.
+
+The text fields support exact times in seconds. **New Section** creates a five-second draft at the current playhead with both endpoints ready to move. Name the draft and choose **Save Section** to keep it.
+
+## Video size and full-screen practice
+
+The editor starts with a 16:9 player. Drag the grip immediately beneath the video to adjust its height, or choose **Reset Video Size** in the layout menu. The video, timeline, and controls scroll together, keeping the controls reachable in smaller windows. Scrolling most of the video out of view pauses playback.
+
+Use the expand icon beside the app title to enter full-screen practice. The same YouTube player and loop continue in a black, fitted workspace. The control strip below the video contains play/pause, speed, stop-loop, and exit controls. It fades after three seconds of inactivity while playing and returns with pointer movement or a tap. Controls stay visible while paused, when hovered, or with VoiceOver enabled. Use the exit icon or Escape to return to editing. Pausing keeps the active loop ready to resume.
 
 ## iCloud
 

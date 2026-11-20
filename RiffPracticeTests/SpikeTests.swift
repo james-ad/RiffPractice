@@ -5,6 +5,60 @@ import Testing
 @testable import RiffPractice
 
 struct SpikeTests {
+    @Test func panelSizingKeepsControlsUsableAndRemembersPlacement() {
+        #expect(SectionsPanelSizing.width(100) == 280)
+        #expect(SectionsPanelSizing.width(300) == 300)
+        #expect(SectionsPanelSizing.width(500) == 320)
+        #expect(SectionsPanelSizing.width(.nan) == 320)
+        #expect(SectionsPanelSizing.items(placement: .left, visible: true, sideBySide: true) == [.sections, .video])
+        #expect(SectionsPanelSizing.items(placement: .right, visible: true, sideBySide: true) == [.video, .sections])
+        #expect(SectionsPanelSizing.items(placement: .below, visible: true, sideBySide: false) == [.video, .sections])
+        #expect(SectionsPanelSizing.items(placement: .left, visible: true, sideBySide: false) == [.video, .sections])
+        #expect(SectionsPanelSizing.items(placement: .right, visible: false, sideBySide: true) == [.video])
+    }
+
+    @Test func nearbyMarkersRemainIndividuallyReachable() throws {
+        let sections = try (0..<12).map { index in
+            TimelineSection(id: "marker-\(index)", name: "Part \(index)",
+                            range: try #require(LoopRange(start: Double(index), end: Double(index + 1))))
+        }
+        let groups = TimelineMarkerGroup.arrange(sections, duration: 120, width: 600)
+        for endpoint in TimelineEndpoint.allCases {
+            let row = groups.filter { $0.endpoint == endpoint }
+            #expect(Set(row.flatMap(\.sections).map(\.id)) == Set(sections.map(\.id)))
+            let times = row.map(\.time)
+            for (first, next) in zip(times, times.dropFirst()) {
+                #expect((next - first) * (600 - 48) / 120 >= 44)
+            }
+        }
+        #expect(TimelineEndpoint.start.row < TimelineEndpoint.end.row)
+    }
+
+    @Test func videoSizeKeepsItsDefaultAspectAndFitsFullScreen() {
+        #expect(VideoViewport.editorHeight(width: 800, scale: 1) == 450)
+        #expect(VideoViewport.editorHeight(width: 800, scale: 0) == 292.5)
+        let fitted = VideoViewport.fitted(in: CGSize(width: 1200, height: 700))
+        #expect(fitted.width == 1200)
+        #expect(fitted.height == 675)
+        #expect(VideoViewport.fitted(in: CGSize(width: 1200, height: 500)).height == 500)
+    }
+
+    @Test func fullScreenControlsStayAvailableWhenPausedOrInteracting() {
+        #expect(FullScreenControls.shouldHide(playing: true, pointerOverControls: false, voiceOver: false))
+        #expect(!FullScreenControls.shouldHide(playing: false, pointerOverControls: false, voiceOver: false))
+        #expect(!FullScreenControls.shouldHide(playing: true, pointerOverControls: true, voiceOver: false))
+        #expect(!FullScreenControls.shouldHide(playing: true, pointerOverControls: false, voiceOver: true))
+    }
+
+    @Test func pausedLoopCanResumeAtItsCurrentSection() throws {
+        let range = try #require(LoopRange(start: 5, end: 10))
+        var loop = LoopExperiment(strategy: .seek, range: range)
+        loop.beginSeek(at: 0)
+        loop.prepareToResume()
+        #expect(loop.sample(mediaTime: 7, uptime: 60, isPlaying: true) == nil)
+        #expect(loop.sample(mediaTime: 10, uptime: 63, isPlaying: true) == .seekToStart)
+    }
+
     @Test func contiguousSectionsPlayAsOneRangeForBothLoopMethods() throws {
         let intro = try #require(LoopRange(start: 0, end: 5))
         let verse = try #require(LoopRange(start: 5, end: 10))

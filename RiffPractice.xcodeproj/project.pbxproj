@@ -15,6 +15,7 @@
 		F766EF4E9CCEE7D9C4B873F2 /* SpikePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9F05F729D527EA6F33775F /* SpikePlayer.swift */; };
 		FBA4AF010D255C90366CEDD5 /* PracticeTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FBE3396EAFBF92C71E6CBDD /* PracticeTimeline.swift */; };
 		C16BA3029F354F24B1E0CA01 /* PracticeLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = C16BA3029F354F24B1E0CA02 /* PracticeLibrary.swift */; };
+		BA173FF00D00F11A11335501 /* PlaybackPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA173FF00D00F11A11335502 /* PlaybackPresentation.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,6 +37,7 @@
 		5F9F05F729D527EA6F33775F /* SpikePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpikePlayer.swift; sourceTree = "<group>"; };
 		9FBE3396EAFBF92C71E6CBDD /* PracticeTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeTimeline.swift; sourceTree = "<group>"; };
 		C16BA3029F354F24B1E0CA02 /* PracticeLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeLibrary.swift; sourceTree = "<group>"; };
+		BA173FF00D00F11A11335502 /* PlaybackPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackPresentation.swift; sourceTree = "<group>"; };
 		DF10214972B97C7F12E3B861 /* RiffPractice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RiffPractice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E6E52BB68C56E2F936FD23FE /* RiffPracticeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiffPracticeApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -58,6 +60,7 @@
 				557507B0EC7191609B95CF78 /* PracticeRecord.swift */,
 				9FBE3396EAFBF92C71E6CBDD /* PracticeTimeline.swift */,
 				C16BA3029F354F24B1E0CA02 /* PracticeLibrary.swift */,
+				BA173FF00D00F11A11335502 /* PlaybackPresentation.swift */,
 				E6E52BB68C56E2F936FD23FE /* RiffPracticeApp.swift */,
 				5F9F05F729D527EA6F33775F /* SpikePlayer.swift */,
 			);
@@ -169,6 +172,7 @@
 				5F90CF405328AE9C2FFA4C35 /* PracticeRecord.swift in Sources */,
 				FBA4AF010D255C90366CEDD5 /* PracticeTimeline.swift in Sources */,
 				C16BA3029F354F24B1E0CA01 /* PracticeLibrary.swift in Sources */,
+				BA173FF00D00F11A11335501 /* PlaybackPresentation.swift in Sources */,
 				3C8D060B5F02D37ACA1E480F /* RiffPracticeApp.swift in Sources */,
 				F766EF4E9CCEE7D9C4B873F2 /* SpikePlayer.swift in Sources */,
 			);

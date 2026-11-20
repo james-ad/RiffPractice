@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 import WebKit
 
 private final class ScriptReceiver: NSObject, WKScriptMessageHandler {
@@ -23,11 +24,6 @@ final class SpikePlayer {
         case cued = 5
     }
 
-    struct LogEntry: Identifiable {
-        let id = UUID()
-        let text: String
-    }
-
     let webView: WKWebView
     private(set) var videoID: String?
     private(set) var status = "Load an embeddable YouTube video."
@@ -36,12 +32,12 @@ final class SpikePlayer {
     private(set) var availableRates = [1.0]
     private(set) var actualRate = 1.0
     private(set) var isReady = false
-    private(set) var log: [LogEntry] = []
     private(set) var wrapCount = 0
     private(set) var isActive = false
     private var state: PlayerState?
     private var session = UUID().uuidString
     private var experiment: LoopExperiment?
+    private var pausedExperiment: LoopExperiment?
     private var loopToken = UUID()
     private var requestedRate = 1.0
     private var wrapStartedAt: TimeInterval?
@@ -49,17 +45,13 @@ final class SpikePlayer {
     private var deadline: TimeInterval?
     private var loadTimeout: Task<Void, Never>?
     private let clockStart = ProcessInfo.processInfo.systemUptime
+    @ObservationIgnored private let logger = Logger(subsystem: "com.jamesdunn.riffpractice", category: "Playback")
 
-    var isLooping: Bool { experiment != nil }
+    var isLooping: Bool { experiment != nil || pausedExperiment != nil }
     var isPlaying: Bool { state == .playing }
     var canJump: Bool { isActive && isReady && (state == .playing || state == .paused) }
     var canLoop: Bool { duration != nil && (canJump || (isActive && isReady && state == .ended)) }
-    var loopPosition: String? {
-        guard let experiment else { return nil }
-        if experiment.wholeVideo { return "Repeating entire video" }
-        return "Looping range \(experiment.index + 1) of \(experiment.count)"
-    }
-    var logText: String { log.map(\.text).joined(separator: "\n") }
+    var isRepeatingVideo: Bool { experiment?.wholeVideo == true || pausedExperiment?.wholeVideo == true }
 
     init() {
         let receiver = ScriptReceiver()
@@ -117,9 +109,31 @@ final class SpikePlayer {
         if !newValue { pause() }
     }
 
+    func unload() {
+        session = UUID().uuidString
+        loadTimeout?.cancel()
+        resetLoop()
+        videoID = nil
+        isReady = false
+        state = nil
+        duration = nil
+        mediaTime = 0
+        actualRate = 1
+        requestedRate = 1
+        availableRates = [1]
+        status = "Choose a saved session or add a YouTube video."
+        webView.loadHTMLString("", baseURL: nil)
+    }
+
     func pause() {
-        stopLoop()
+        suspendLoop()
         if isReady { send("pause") }
+    }
+
+    func togglePlayback() {
+        guard isActive, isReady else { return }
+        if isPlaying { pause() }
+        else { send("play") }
     }
 
     func setRate(_ rate: Double) {
@@ -164,14 +178,10 @@ final class SpikePlayer {
     }
 
     func stopLoop() {
-        let clearBoundary = experiment?.strategy == .bounded
+        let clearBoundary = experiment?.strategy == .bounded || pausedExperiment?.strategy == .bounded
         if isLooping { record("Stop loop") }
         resetLoop()
         if clearBoundary, isReady { send("clearBoundary") }
-    }
-
-    func clearLog() {
-        log = []
     }
 
     fileprivate func receive(_ event: [String: Any]) {
@@ -237,12 +247,17 @@ final class SpikePlayer {
         switch newState {
         case .playing:
             status = "Playing"
+            if var pausedExperiment {
+                pausedExperiment.prepareToResume()
+                experiment = pausedExperiment
+                self.pausedExperiment = nil
+            }
             if experiment?.strategy == .bounded {
                 _ = experiment?.sample(mediaTime: time, uptime: ProcessInfo.processInfo.systemUptime, isPlaying: true)
             }
         case .paused:
             status = "Paused"
-            if !awaitingBoundedStart { stopLoop() }
+            if !awaitingBoundedStart { suspendLoop() }
         case .buffering:
             status = "Buffering…"
         case .ended:
@@ -318,6 +333,17 @@ final class SpikePlayer {
     private func resetLoop() {
         loopToken = UUID()
         experiment = nil
+        pausedExperiment = nil
+        awaitingBoundedStart = false
+        deadline = nil
+        wrapStartedAt = nil
+    }
+
+    private func suspendLoop() {
+        guard let experiment else { return }
+        pausedExperiment = experiment
+        self.experiment = nil
+        loopToken = UUID()
         awaitingBoundedStart = false
         deadline = nil
         wrapStartedAt = nil
@@ -354,8 +380,7 @@ final class SpikePlayer {
 
     private func record(_ line: String) {
         let elapsed = ProcessInfo.processInfo.systemUptime - clockStart
-        log.append(LogEntry(text: "\(formatted(elapsed))  \(line)"))
-        if log.count > 500 { log.removeFirst(log.count - 500) }
+        logger.debug("\(self.formatted(elapsed))  \(line)")
     }
 
     private func formatted(_ value: Double) -> String {

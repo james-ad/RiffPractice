@@ -34,14 +34,14 @@ struct SavedVideoSession: Identifiable {
     let title: String
     let rate: Double
 
-    static func all(sections: [PracticeRecord], titles: [String: String]) -> [Self] {
-        var representatives: [String: PracticeRecord] = [:]
-        for section in sections.sorted(by: { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) {
+    static func all(sections: [PracticeSection], titles: [String: String], rates: [String: Double] = [:]) -> [Self] {
+        var representatives: [String: PracticeSection] = [:]
+        for section in PracticeSection.visible(in: sections).sorted(by: { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) {
             guard let id = section.videoID, representatives[id] == nil else { continue }
             representatives[id] = section
         }
         return Set(representatives.keys).union(titles.keys).map { id in
-            Self(id: id, title: titles[id] ?? representatives[id]?.name ?? id, rate: representatives[id]?.rate ?? 1)
+            Self(id: id, title: titles[id] ?? representatives[id]?.name ?? id, rate: rates[id] ?? representatives[id]?.rate ?? 1)
         }.sorted {
             let order = $0.title.localizedStandardCompare($1.title)
             return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending

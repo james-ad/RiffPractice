@@ -1,3 +1,5 @@
+import CloudKit
+import CoreData
 import SwiftData
 import SwiftUI
 import WebKit
@@ -7,34 +9,66 @@ struct RiffPracticeApp: App {
     var body: some Scene {
         #if os(macOS)
         Window("RiffPractice", id: "practice") {
-            SpikeView().frame(minWidth: 560, minHeight: 550)
+            LibraryRoot().frame(minWidth: 560, minHeight: 550)
         }
         .defaultSize(width: 1040, height: 760)
         .windowResizability(.contentMinSize)
-        .modelContainer(for: PracticeRecord.self)
         #else
         WindowGroup {
-            SpikeView()
+            LibraryRoot()
         }
-        .modelContainer(for: PracticeRecord.self)
         #endif
     }
 }
 
+private struct LibraryRoot: View {
+    @State private var library = PracticeLibrary()
+
+    var body: some View {
+        Group {
+            if let container = library.container {
+                SpikeView(library: library).modelContainer(container)
+            } else if let error = library.error {
+                ContentUnavailableView {
+                    Label("Library Could Not Open", systemImage: "externaldrive.badge.exclamationmark")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("Try Again") { library.open() }
+                }
+            } else {
+                ProgressView("Opening practice library…")
+            }
+        }
+        .task {
+            library.open()
+            await library.refreshAccount()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) {
+            library.receivedCloudEvent($0)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)) { _ in
+            Task { await library.refreshAccount() }
+        }
+    }
+}
+
 private struct SpikeView: View {
+    let library: PracticeLibrary
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
-    @Query private var records: [PracticeRecord]
-    @AppStorage("videoSessionTitles") private var storedSessionTitles = Data()
+    @Query private var records: [PracticeSection]
+    @Query private var videoSessions: [VideoSession]
     @State private var player = SpikePlayer()
     @State private var link = ""
     @State private var name = ""
     @State private var start = ""
     @State private var end = ""
     @State private var preferredRate = 1.0
-    @State private var selectedSections: Set<PersistentIdentifier> = []
-    @State private var editedSection: PersistentIdentifier?
-    @State private var sectionToDelete: PracticeRecord?
+    @State private var selectedSections: Set<String> = []
+    @State private var editedSection: String?
+    @State private var sectionToDelete: PracticeSection?
+    @State private var lastPreviewSeek = 0.0
     @State private var sessionToName: String?
     @State private var sessionTitleDraft = ""
     @State private var strategy = LoopStrategy.seek
@@ -52,13 +86,27 @@ private struct SpikeView: View {
             let workspace = wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 16)) :
                 AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
             VStack(alignment: .leading, spacing: 12) {
-                Text("RiffPractice").font(.title.bold())
-                    .accessibilityAddTraits(.isHeader)
+                HStack {
+                    Text("RiffPractice").font(.title.bold())
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    Menu {
+                        Text(library.syncStatus)
+                        Button("Check iCloud") { Task { await library.refreshAccount() } }
+                        if let backupURL = library.backupURL {
+                            ShareLink("Export Original Marker Backup", item: backupURL)
+                        }
+                    } label: {
+                        Image(systemName: library.cloudEnabled ? "icloud" : "internaldrive")
+                    }
+                    .accessibilityLabel(library.syncStatus)
+                    .help(library.syncStatus)
+                }
                 linkControls
                 workspace {
                     playbackPane(fitsPlayer: fitsPlayer, height: playerHeight)
                         .frame(maxWidth: .infinity)
-                        .frame(maxHeight: wide ? .infinity : playerHeight + 128, alignment: .top)
+                        .frame(maxHeight: wide ? .infinity : playerHeight + (activeRange == nil ? 128 : 208), alignment: .top)
                     Rectangle()
                         .fill(Color.secondary.opacity(0.23))
                         .frame(width: wide ? 1 : nil, height: wide ? nil : 1)
@@ -73,6 +121,7 @@ private struct SpikeView: View {
             .onChange(of: fitsPlayer, initial: true) { updateActivity(fitsPlayer) }
             .onChange(of: scenePhase, initial: true) { updateActivity(fitsPlayer) }
             .onChange(of: videoID) { _, _ in resetSectionSelection() }
+            .onChange(of: selectedRanges) { if player.isLooping { player.stopLoop() } }
             .onDisappear { player.setActive(false) }
             .confirmationDialog(
                 "Delete this section?",
@@ -111,7 +160,9 @@ private struct SpikeView: View {
                         activeSection: currentSection?.range,
                         sectionName: currentSection?.name,
                         canSeek: player.canJump,
-                        seek: { player.jump(to: $0) }
+                        seek: { player.jump(to: $0) },
+                        editRange: activeRange,
+                        changeRange: moveEndpoints
                     )
                     .id(player.videoID)
                 }
@@ -180,6 +231,11 @@ private struct SpikeView: View {
                 HStack { startControls; endControls }
                 VStack(alignment: .leading) { startControls; endControls }
             }
+            if editedSection != nil {
+                Text("Drag A or B on the timeline to adjust this section. Release to save.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
             ViewThatFits(in: .horizontal) {
                 HStack { rateControls; strategyControls }
                 VStack(alignment: .leading) { rateControls; strategyControls }
@@ -246,7 +302,20 @@ private struct SpikeView: View {
         .fixedSize()
         .disabled(!player.isReady || player.isLooping)
         .onChange(of: preferredRate) { _, rate in
-            if player.isReady, player.availableRates.contains(rate) { player.setRate(rate) }
+            if player.isReady, player.availableRates.contains(rate) {
+                player.setRate(rate)
+                if let id = videoID, id == player.videoID {
+                    let session = VideoSession.latest(in: videoSessions)[id] ?? VideoSession(videoID: id, title: "", rate: rate)
+                    if session.modelContext == nil { modelContext.insert(session) }
+                    session.rate = rate
+                    session.updatedAt = Date()
+                    do { try modelContext.save() }
+                    catch {
+                        modelContext.rollback()
+                        notice = "Could not save the preferred speed: \(error.localizedDescription)"
+                    }
+                }
+            }
         }
     }
 
@@ -273,7 +342,18 @@ private struct SpikeView: View {
                     }
                 }
             }
-            Text("Sections").font(.headline)
+            HStack {
+                Text("Sections").font(.headline)
+                Spacer()
+                Button("New Section") {
+                    guard let duration = player.duration else { return }
+                    clearEditor()
+                    let beginning = min(player.mediaTime, max(0, duration - 0.05))
+                    start = format(beginning)
+                    end = format(min(duration, beginning + 5))
+                }
+                .disabled(!player.canJump || videoID != player.videoID)
+            }
             ViewThatFits(in: .horizontal) {
                 HStack { nameField; saveButton; cancelEditButton }
                 VStack(alignment: .leading) { nameField; HStack { saveButton; cancelEditButton } }
@@ -311,14 +391,14 @@ private struct SpikeView: View {
         }
     }
 
-    private func sectionRow(_ section: PracticeRecord) -> some View {
-        let isCurrent = currentSection?.persistentModelID == section.persistentModelID
+    private func sectionRow(_ section: PracticeSection) -> some View {
+        let isCurrent = currentSection?.id == section.id
         return HStack(spacing: 10) {
             Toggle(isOn: Binding(
-                get: { selectedSections.contains(section.persistentModelID) },
+                get: { selectedSections.contains(section.id) },
                 set: { checked in
-                    if checked { selectedSections.insert(section.persistentModelID) }
-                    else { selectedSections.remove(section.persistentModelID) }
+                    if checked { selectedSections.insert(section.id) }
+                    else { selectedSections.remove(section.id) }
                 }
             )) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -412,23 +492,23 @@ private struct SpikeView: View {
 
     private var videoID: String? { YouTubeLink.videoID(from: link) }
 
-    private var sections: [PracticeRecord] { PracticeRecord.sections(for: videoID, in: records) }
+    private var sections: [PracticeSection] { PracticeSection.sections(for: videoID, in: records) }
 
-    private var timelineSections: [PracticeRecord] {
-        PracticeRecord.sections(for: player.videoID, in: records).filter { playableRange(for: $0) != nil }
+    private var timelineSections: [PracticeSection] {
+        PracticeSection.sections(for: player.videoID, in: records).filter { playableRange(for: $0) != nil }
     }
 
-    private var currentSection: PracticeRecord? {
+    private var currentSection: PracticeSection? {
         let time = player.mediaTime
         return timelineSections.last { $0.start <= time && time < $0.end }
     }
 
     private var sessionTitles: [String: String] {
-        (try? JSONDecoder().decode([String: String].self, from: storedSessionTitles)) ?? [:]
+        VideoSession.latest(in: videoSessions.filter { !$0.title.isEmpty }).mapValues(\.title)
     }
 
     private var savedSessions: [SavedVideoSession] {
-        SavedVideoSession.all(sections: records, titles: sessionTitles)
+        SavedVideoSession.all(sections: records, titles: sessionTitles, rates: VideoSession.latest(in: videoSessions).mapValues(\.rate))
     }
 
     private var canLoop: Bool {
@@ -436,10 +516,10 @@ private struct SpikeView: View {
     }
 
     private var selectedRanges: [LoopRange] {
-        sections.filter { selectedSections.contains($0.persistentModelID) }.compactMap(playableRange(for:))
+        sections.filter { selectedSections.contains($0.id) }.compactMap(playableRange(for:))
     }
 
-    private func playableRange(for section: PracticeRecord) -> LoopRange? {
+    private func playableRange(for section: PracticeSection) -> LoopRange? {
         guard let duration = player.duration, section.videoID == player.videoID else { return nil }
         return LoopRange(start: section.start, end: section.end, duration: duration)
     }
@@ -458,13 +538,18 @@ private struct SpikeView: View {
         guard let range, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let cleanedLink = link.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let editedSection, let record = sections.first(where: { $0.persistentModelID == editedSection }) {
+        if let editedSection {
+            guard let record = sections.first(where: { $0.id == editedSection }) else {
+                notice = "This section was removed. Choose New Section to create another."
+                return
+            }
             record.name = cleanedName
             record.start = range.start
             record.end = range.end
             record.rate = preferredRate
+            record.updatedAt = Date()
         } else {
-            modelContext.insert(PracticeRecord(link: cleanedLink, name: cleanedName, start: range.start, end: range.end, rate: preferredRate))
+            modelContext.insert(PracticeSection(link: cleanedLink, name: cleanedName, start: range.start, end: range.end, rate: preferredRate))
         }
         do {
             try modelContext.save()
@@ -476,16 +561,17 @@ private struct SpikeView: View {
         }
     }
 
-    private func edit(_ section: PracticeRecord) {
-        editedSection = section.persistentModelID
+    private func edit(_ section: PracticeSection) {
+        editedSection = section.id
         name = section.name
         start = format(section.start)
         end = format(section.end)
     }
 
-    private func delete(_ section: PracticeRecord) {
-        let id = section.persistentModelID
-        modelContext.delete(section)
+    private func delete(_ section: PracticeSection) {
+        let id = section.id
+        section.removed = true
+        section.updatedAt = Date()
         do {
             try modelContext.save()
             selectedSections.remove(id)
@@ -500,12 +586,40 @@ private struct SpikeView: View {
     private func saveSessionTitle(for id: String) {
         let title = sessionTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
-        var titles = sessionTitles
-        titles[id] = title
+        let session = VideoSession.latest(in: videoSessions)[id] ?? VideoSession(videoID: id, title: title, rate: preferredRate)
+        if session.modelContext == nil { modelContext.insert(session) }
+        session.title = title
+        session.rate = preferredRate
+        session.updatedAt = Date()
         do {
-            storedSessionTitles = try JSONEncoder().encode(titles)
+            try modelContext.save()
         } catch {
+            modelContext.rollback()
             notice = "Could not save the session name: \(error.localizedDescription)"
+        }
+    }
+
+    private func moveEndpoints(_ range: LoopRange, target: Double, finished: Bool) {
+        start = format(range.start)
+        end = format(range.end)
+        let now = ProcessInfo.processInfo.systemUptime
+        if finished || now - lastPreviewSeek >= 0.15 {
+            player.jump(to: target)
+            lastPreviewSeek = now
+        }
+        guard finished, let editedSection,
+              let record = sections.first(where: { $0.id == editedSection }) else { return }
+        record.start = range.start
+        record.end = range.end
+        record.updatedAt = Date()
+        do {
+            try modelContext.save()
+            notice = "Section endpoints saved."
+        } catch {
+            modelContext.rollback()
+            start = format(record.start)
+            end = format(record.end)
+            notice = "Could not save the endpoints: \(error.localizedDescription)"
         }
     }
 

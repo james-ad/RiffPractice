@@ -8,8 +8,11 @@ struct PracticeTimeline: View {
     let sectionName: String?
     let canSeek: Bool
     let seek: (Double) -> Void
+    let editRange: LoopRange?
+    let changeRange: (LoopRange, Double, Bool) -> Void
 
     @GestureState private var preview: Double?
+    @State private var draggedRange: LoopRange?
 
     private let inset = 10.0
     private var displayedTime: Double { preview ?? playhead }
@@ -62,12 +65,26 @@ struct PracticeTimeline: View {
                             }
                         }
                 )
+                if let range = draggedRange ?? editRange {
+                    let first = position(range.start, width: width)
+                    let last = position(range.end, width: width)
+                    Rectangle()
+                        .fill(Color.accentColor.opacity(0.18))
+                        .frame(width: max(1, last - first), height: 8)
+                        .position(x: (first + last) / 2, y: 77)
+                        .allowsHitTesting(false)
+                    endpointHandle(isStart: true, range: range, width: width)
+                        .position(x: first, y: 55)
+                    endpointHandle(isStart: false, range: range, width: width)
+                        .position(x: last, y: 100)
+                }
             }
-            .frame(height: 44)
+            .frame(height: editRange == nil ? 44 : 124)
+            .coordinateSpace(name: "practiceTimeline")
             .focusable(canSeek)
             .onKeyPress(.leftArrow) { adjust(by: -5) }
             .onKeyPress(.rightArrow) { adjust(by: 5) }
-            .accessibilityElement()
+            .accessibilityElement(children: .contain)
             .accessibilityLabel("Practice timeline")
             .accessibilityValue(label(for: displayedTime))
             .accessibilityHint("Adjusts playback position by five seconds.")
@@ -91,6 +108,43 @@ struct PracticeTimeline: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, inset)
         }
+        .onChange(of: editRange) { if editRange == nil { draggedRange = nil } }
+    }
+
+    private func endpointHandle(isStart: Bool, range: LoopRange, width: Double) -> some View {
+        Text(isStart ? "A" : "B")
+            .font(.caption.bold())
+            .foregroundStyle(.white)
+            .frame(width: 24, height: 28)
+            .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 5))
+            .frame(width: 34, height: 44)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .named("practiceTimeline"))
+                    .onChanged { value in
+                        guard canSeek, let original = editRange else { return }
+                        let target = time(at: value.location.x, width: width)
+                        let updated = isStart ? original.movingStart(to: target, duration: duration) :
+                            original.movingEnd(to: target, duration: duration)
+                        if let updated {
+                            draggedRange = updated
+                            changeRange(updated, isStart ? updated.start : updated.end, false)
+                        }
+                    }
+                    .onEnded { _ in
+                        if let draggedRange { changeRange(draggedRange, isStart ? draggedRange.start : draggedRange.end, true) }
+                        draggedRange = nil
+                    }
+            )
+            .accessibilityLabel(isStart ? "Section start A" : "Section end B")
+            .accessibilityValue(label(for: isStart ? range.start : range.end))
+            .accessibilityAdjustableAction { direction in
+                guard canSeek else { return }
+                let delta = direction == .increment ? 0.1 : -0.1
+                let updated = isStart ? range.movingStart(to: range.start + delta, duration: duration) :
+                    range.movingEnd(to: range.end + delta, duration: duration)
+                if let updated { changeRange(updated, isStart ? updated.start : updated.end, true) }
+            }
     }
 
     private func position(_ time: Double, width: Double) -> Double {

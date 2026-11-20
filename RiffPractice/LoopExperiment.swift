@@ -18,6 +18,27 @@ struct LoopRange: Equatable {
         self.start = start
         self.end = end
     }
+
+    static func continuousRanges(_ ranges: [Self]) -> [Self] {
+        var combined: [Self] = []
+        for range in ranges.sorted(by: { ($0.start, $0.end) < ($1.start, $1.end) }) {
+            if let previous = combined.last, range.start <= previous.end + 0.001,
+               let joined = Self(start: previous.start, end: max(previous.end, range.end)) {
+                combined[combined.count - 1] = joined
+            } else {
+                combined.append(range)
+            }
+        }
+        return combined
+    }
+
+    func movingStart(to time: Double, duration: Double) -> Self? {
+        Self(start: min(max(time, 0), end - 0.05), end: end, duration: duration)
+    }
+
+    func movingEnd(to time: Double, duration: Double) -> Self? {
+        Self(start: start, end: max(start + 0.05, min(time, duration)), duration: duration)
+    }
 }
 
 struct LoopExperiment {
@@ -42,7 +63,7 @@ struct LoopExperiment {
     init(strategy: LoopStrategy, range: LoopRange, followingRanges: [LoopRange] = [], wholeVideo: Bool = false) {
         self.strategy = strategy
         self.wholeVideo = wholeVideo
-        ranges = [range] + followingRanges
+        ranges = LoopRange.continuousRanges([range] + followingRanges)
     }
 
     mutating func beginSeek(at uptime: TimeInterval) {

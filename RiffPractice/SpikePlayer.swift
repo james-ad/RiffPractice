@@ -57,7 +57,7 @@ final class SpikePlayer {
     var loopPosition: String? {
         guard let experiment else { return nil }
         if experiment.wholeVideo { return "Repeating entire video" }
-        return "Looping section \(experiment.index + 1) of \(experiment.count)"
+        return "Looping range \(experiment.index + 1) of \(experiment.count)"
     }
     var logText: String { log.map(\.text).joined(separator: "\n") }
 
@@ -142,6 +142,7 @@ final class SpikePlayer {
         guard canLoop, !isLooping, let range = ranges.first else { return }
         experiment = LoopExperiment(strategy: strategy, range: range,
                                     followingRanges: Array(ranges.dropFirst()), wholeVideo: wholeVideo)
+        guard let playbackRange = experiment?.range else { return }
         wrapCount = 0
         record("Start \(strategy.rawValue) · A=\(formatted(range.start)) B=\(formatted(range.end)) · rate=\(actualRate)")
         requestedRate = actualRate
@@ -156,9 +157,9 @@ final class SpikePlayer {
         }
         if strategy == .seek {
             experiment?.beginSeek(at: ProcessInfo.processInfo.systemUptime)
-            send(isPlaying ? "seek" : "restart", data: ["start": range.start], tiedToLoop: true)
+            send(isPlaying ? "seek" : "restart", data: ["start": playbackRange.start], tiedToLoop: true)
         } else {
-            requestSegment(range)
+            requestSegment(playbackRange)
         }
     }
 

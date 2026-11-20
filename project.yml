@@ -17,15 +17,20 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jamesdunn.riffpractice
+        DEVELOPMENT_TEAM: Z83D3LA293
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: Apple Development
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: RiffPractice
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
         "TARGETED_DEVICE_FAMILY[sdk=iphone*]": "2"
         "INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphone*]": YES
         "INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad[sdk=iphone*]": "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Config/Mac.entitlements
-        "CODE_SIGN_STYLE[sdk=macosx*]": Manual
-        "CODE_SIGN_IDENTITY[sdk=macosx*]": "-"
+        RIFFPRACTICE_CLOUD_SYNC: YES
+        "INFOPLIST_FILE[sdk=macosx*]": Config/MacInfo.plist
+        "INFOPLIST_FILE[sdk=iphone*]": Config/iOSInfo.plist
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Config/CloudMac.entitlements
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphone*]": Config/CloudiOS.entitlements
   RiffPracticeTests:
     type: bundle.unit-test
     supportedDestinations: [iOS, macOS]
